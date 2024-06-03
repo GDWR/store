@@ -1,9 +1,11 @@
 import logging
+import operator
 import random
 from logging.config import dictConfig
 
 from faker import Faker
 from fastapi import Depends, FastAPI, HTTPException
+from sqlalchemy import column, select, func, literal
 from sqlalchemy.orm import Session
 
 from . import models, schemas, logconf
@@ -46,13 +48,32 @@ def startup_event():
     logger.info("Finished populating database")
 
 
-@app.get("/files/", response_model=list[schemas.File])
-def get_files(skip: int = 0, limit: int = 100, session: Session = Depends(get_db)):
-    return session \
-        .query(models.File) \
-        .offset(skip) \
-        .limit(limit) \
+@app.get("/files/", response_model=schemas.Paginated[schemas.FileWithErrors])
+def get_files(size: int = 0, max: int = 25, session: Session = Depends(get_db)):
+    count = select(func.count()) \
+        .select_from(models.File) \
+        .cte('count')
+
+    stmt = select(models.File, column('count')) \
+        .distinct(models.File.id) \
+        .join(models.Error, isouter=True) \
+        .join(count, literal(1) == 1) \
+        .offset(size * max) \
+        .limit(max)
+
+    results = session \
+        .execute(stmt) \
         .all()
+
+    # count comes with parenthesis?
+    count = results[0][1].replace('(', '').replace(')', '')
+
+    return {
+        "size": size,  # offset
+        "max": max,  # amount returned
+        "count": count,
+        "results": map(operator.itemgetter(0), results),
+    }
 
 
 @app.get("/files/{file_id}", response_model=schemas.File)
