@@ -1,13 +1,13 @@
 import logging
+import random
 from logging.config import dictConfig
 
 from faker import Faker
 from fastapi import Depends, FastAPI, HTTPException
 from sqlalchemy.orm import Session
 
-
-from . import crud, models, schemas, logconf
-from .database import Base, SessionLocal, engine
+from . import models, schemas, logconf
+from .database import Base, SessionLocal, engine, get_db
 
 Base.metadata.create_all(bind=engine)
 
@@ -17,72 +17,74 @@ fake = Faker()
 logger = logging.getLogger("store")
 
 
-# Dependency
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-
 @app.on_event("startup")
 def startup_event():
     session = SessionLocal()
 
-    number_of_users = session.query(models.User).count()
-    if number_of_users != 0:
+    file_count = session.query(models.File).count()
+    if file_count != 0:
         logger.info("Database already populated, skipping")
         return
 
     logger.info("Populating database with fake data")
     for _ in range(100):
-        user = schemas.UserCreate(
-            name=fake.name(),
-            email=fake.email(),
-            password=fake.password(),
+        file = models.File(
+            path=fake.file_path()
         )
-        user = crud.create_user(session, user)
+        session.add(file)
+        session.commit()
+        session.refresh(file)
 
-        for _ in range(10):
-            item = schemas.ItemCreate(
-                title=fake.name(),
-                description=fake.paragraph(),
+        for _ in range(random.randint(0, 3)):
+            error = models.Error(
+                file=file,
+                message=fake.text(),
             )
-            crud.create_user_item(session, item, user.id)
+            session.add(error)
+            session.commit()
+
     logger.info("Finished populating database")
 
 
-@app.post("/users/", response_model=schemas.User)
-def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
-    db_user = crud.get_user_by_email(db, email=user.email)
-    if db_user:
-        raise HTTPException(status_code=400, detail="Email already registered")
-    return crud.create_user(db=db, user=user)
+@app.get("/files/", response_model=list[schemas.File])
+def get_files(skip: int = 0, limit: int = 100, session: Session = Depends(get_db)):
+    return session \
+        .query(models.File) \
+        .offset(skip) \
+        .limit(limit) \
+        .all()
 
 
-@app.get("/users/", response_model=list[schemas.User])
-def read_users(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    users = crud.get_users(db, skip=skip, limit=limit)
-    return users
+@app.get("/files/{file_id}", response_model=schemas.File)
+def get_file_by_id(file_id: int, session: Session = Depends(get_db)):
+    file = session \
+        .query(models.File) \
+        .filter(models.File.id == file_id) \
+        .first()
+
+    if file is None:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    return file
 
 
-@app.get("/users/{user_id}", response_model=schemas.User)
-def read_user(user_id: int, db: Session = Depends(get_db)):
-    db_user = crud.get_user(db, user_id=user_id)
-    if db_user is None:
-        raise HTTPException(status_code=404, detail="User not found")
-    return db_user
+@app.get("/errors/", response_model=list[schemas.Error])
+def get_errors(skip: int = 0, limit: int = 100, session: Session = Depends(get_db)):
+    return session \
+        .query(models.Error) \
+        .offset(skip) \
+        .limit(limit) \
+        .all()
 
 
-@app.post("/users/{user_id}/items/", response_model=schemas.Item)
-def create_item_for_user(
-        user_id: int, item: schemas.ItemCreate, db: Session = Depends(get_db)
-):
-    return crud.create_user_item(db=db, item=item, user_id=user_id)
+@app.get("/errors/{error_id}", response_model=schemas.Error)
+def get_file_by_id(error_id: int, session: Session = Depends(get_db)):
+    error = session \
+        .query(models.Error) \
+        .filter(models.Error.id == error_id) \
+        .first()
 
+    if error is None:
+        raise HTTPException(status_code=404, detail="Error not found")
 
-@app.get("/items/", response_model=list[schemas.Item])
-def read_items(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    items = crud.get_items(db, skip=skip, limit=limit)
-    return items
+    return error
