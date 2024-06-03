@@ -7,9 +7,9 @@ from sqlalchemy.orm import Session
 
 
 from . import crud, models, schemas, logconf
-from .database import SessionLocal, engine
+from .database import Base, SessionLocal, engine
 
-models.Base.metadata.create_all(bind=engine)
+Base.metadata.create_all(bind=engine)
 
 dictConfig(logconf.config)
 app = FastAPI()
